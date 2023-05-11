@@ -67,7 +67,7 @@ class LoginsCrypto(
     }
 
     override fun createKey(): String {
-        return mozilla.appservices.logins.createKey()
+        return mozilla.appservices.logins.createAKey()
     }
 
     override fun isKeyRecoveryNeeded(rawKey: String, canary: String): KeyGenerationReason.RecoveryNeeded? {
