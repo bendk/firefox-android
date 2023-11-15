@@ -12,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
+import mozilla.appservices.fxaclient.FxaRustAuthState
 import mozilla.appservices.syncmanager.DeviceSettings
 import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.sync.AccountEventsObserver
@@ -25,7 +26,6 @@ import mozilla.components.concept.sync.Profile
 import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.service.fxa.AccessTokenUnexpectedlyWithoutKey
 import mozilla.components.service.fxa.AccountManagerException
-import mozilla.components.service.fxa.AccountOnDisk
 import mozilla.components.service.fxa.AccountStorage
 import mozilla.components.service.fxa.FxaAuthData
 import mozilla.components.service.fxa.FxaDeviceSettingsCache
@@ -527,11 +527,10 @@ open class FxaAccountManager(
         via: Event,
     ): Event? = when (forState.progressState) {
         ProgressState.Initializing -> {
-            when (accountOnDisk) {
-                is AccountOnDisk.New -> Event.Progress.AccountNotFound
-                is AccountOnDisk.Restored -> {
-                    Event.Progress.AccountRestored
-                }
+            when (account.getAuthState()) {
+                FxaRustAuthState.DISCONNECTED -> Event.Progress.AccountNotFound
+                FxaRustAuthState.CONNECTED -> Event.Progress.AccountRestored
+                FxaRustAuthState.AUTH_ISSUES -> Event.Progress.AccountRestoredWithAuthIssues
             }
         }
         ProgressState.LoggingOut -> {

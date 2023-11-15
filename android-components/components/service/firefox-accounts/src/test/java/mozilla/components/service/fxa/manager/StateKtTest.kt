@@ -40,6 +40,7 @@ class StateKtTest {
                 ProgressState.Initializing -> when (event) {
                     Event.Progress.AccountNotFound -> State.Idle(AccountState.NotAuthenticated)
                     Event.Progress.AccountRestored -> State.Active(ProgressState.CompletingAuthentication)
+                    Event.Progress.AccountRestoredWithAuthIssues -> State.Idle(AccountState.AuthenticationProblem)
                     else -> null
                 }
                 ProgressState.BeginningAuthentication -> when (event) {
@@ -92,6 +93,7 @@ class StateKtTest {
             "Logout" -> Event.Account.Logout
             "AccountNotFound" -> Event.Progress.AccountNotFound
             "AccountRestored" -> Event.Progress.AccountRestored
+            "AccountRestoredWithAuthIssues" -> Event.Progress.AccountRestoredWithAuthIssues
             "AuthData" -> Event.Progress.AuthData(mock())
             "LoggedOut" -> Event.Progress.LoggedOut
             "FailedToRecoverFromAuthenticationProblem" -> Event.Progress.FailedToRecoverFromAuthenticationProblem

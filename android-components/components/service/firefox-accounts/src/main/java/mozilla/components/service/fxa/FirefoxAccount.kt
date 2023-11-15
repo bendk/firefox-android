@@ -94,6 +94,9 @@ class FirefoxAccount internal constructor(
         persistCallback.setCallback(callback)
     }
 
+    @Suppress("UndocumentedPublicFunction") // this is visible only for tests
+    public fun getAuthState() = inner.getAuthState()
+
     override suspend fun beginOAuthFlow(
         scopes: Set<String>,
         entryPoint: FxAEntryPoint,

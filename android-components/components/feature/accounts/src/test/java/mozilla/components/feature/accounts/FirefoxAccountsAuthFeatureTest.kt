@@ -9,6 +9,7 @@ import android.os.Looper.getMainLooper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
+import mozilla.appservices.fxaclient.FxaRustAuthState
 import mozilla.appservices.fxaclient.FxaServer
 import mozilla.components.concept.engine.request.RequestInterceptor
 import mozilla.components.concept.sync.AccountEventsObserver
@@ -16,8 +17,8 @@ import mozilla.components.concept.sync.AuthFlowUrl
 import mozilla.components.concept.sync.AuthType
 import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.DeviceType
-import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.concept.sync.Profile
+import mozilla.components.service.fxa.FirefoxAccount
 import mozilla.components.service.fxa.FxaAuthData
 import mozilla.components.service.fxa.ServerConfig
 import mozilla.components.service.fxa.StorageWrapper
@@ -43,13 +44,13 @@ internal class TestableStorageWrapper(
     manager: FxaAccountManager,
     accountEventObserverRegistry: ObserverRegistry<AccountEventsObserver>,
     serverConfig: ServerConfig,
-    private val block: () -> OAuthAccount = {
-        val account: OAuthAccount = mock()
+    private val block: () -> FirefoxAccount = {
+        val account: FirefoxAccount = mock()
         `when`(account.deviceConstellation()).thenReturn(mock())
         account
     },
 ) : StorageWrapper(manager, accountEventObserverRegistry, serverConfig) {
-    override fun obtainAccount(): OAuthAccount = block()
+    override fun obtainAccount(): FirefoxAccount = block()
 }
 
 // Same as the actual account manager, except we get to control how FirefoxAccountShaped instances
@@ -61,7 +62,7 @@ class TestableFxaAccountManager(
     config: ServerConfig,
     scopes: Set<String>,
     coroutineContext: CoroutineContext,
-    block: () -> OAuthAccount = { mock() },
+    block: () -> FirefoxAccount = { mock() },
 ) : FxaAccountManager(context, config, DeviceConfig("test", DeviceType.MOBILE, setOf()), null, scopes, null, coroutineContext) {
     private val testableStorageWrapper = TestableStorageWrapper(this, accountEventObserverRegistry, serverConfig, block)
     override fun getStorageWrapper(): StorageWrapper {
@@ -246,9 +247,10 @@ class FirefoxAccountsAuthFeatureTest {
     private suspend fun prepareAccountManagerForSuccessfulAuthentication(
         coroutineContext: CoroutineContext,
     ): TestableFxaAccountManager {
-        val mockAccount: OAuthAccount = mock()
+        val mockAccount: FirefoxAccount = mock()
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
 
+        `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.deviceConstellation()).thenReturn(mock())
         `when`(mockAccount.getProfile(anyBoolean())).thenReturn(profile)
         `when`(mockAccount.beginOAuthFlow(any(), any())).thenReturn(AuthFlowUrl("authState", "auth://url"))
@@ -273,9 +275,10 @@ class FirefoxAccountsAuthFeatureTest {
     private suspend fun prepareAccountManagerForFailedAuthentication(
         coroutineContext: CoroutineContext,
     ): TestableFxaAccountManager {
-        val mockAccount: OAuthAccount = mock()
+        val mockAccount: FirefoxAccount = mock()
         val profile = Profile(uid = "testUID", avatar = null, email = "test@example.com", displayName = "test profile")
 
+        `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.getProfile(anyBoolean())).thenReturn(profile)
         `when`(mockAccount.deviceConstellation()).thenReturn(mock())
         `when`(mockAccount.beginOAuthFlow(any(), any())).thenReturn(null)

@@ -88,6 +88,7 @@ internal sealed class Event {
     internal sealed class Progress : Event() {
         object AccountNotFound : Progress()
         object AccountRestored : Progress()
+        object AccountRestoredWithAuthIssues : Progress()
 
         data class AuthData(val authData: FxaAuthData) : Progress()
 
@@ -151,6 +152,7 @@ internal fun State.next(event: Event): State? = when (this) {
         ProgressState.Initializing -> when (event) {
             Event.Progress.AccountNotFound -> State.Idle(AccountState.NotAuthenticated)
             Event.Progress.AccountRestored -> State.Active(ProgressState.CompletingAuthentication)
+            Event.Progress.AccountRestoredWithAuthIssues -> State.Idle(AccountState.AuthenticationProblem)
             else -> null
         }
         ProgressState.BeginningAuthentication -> when (event) {
