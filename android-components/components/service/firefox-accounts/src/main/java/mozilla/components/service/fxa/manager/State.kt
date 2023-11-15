@@ -7,6 +7,7 @@ package mozilla.components.service.fxa.manager
 import mozilla.components.concept.sync.AuthType
 import mozilla.components.concept.sync.FxAEntryPoint
 import mozilla.components.service.fxa.FxaAuthData
+import mozilla.components.support.base.log.logger.Logger
 
 /**
  * This file is the "heart" of the accounts system. It's a finite state machine.
@@ -52,10 +53,13 @@ import mozilla.components.service.fxa.FxaAuthData
  * State transitions are described by a transition matrix, which is described in [State.next].
  */
 
-internal enum class AccountState {
-    NotAuthenticated,
-    Authenticated,
-    AuthenticationProblem,
+private val logger = Logger("FirefoxAccountStateMachine")
+
+internal sealed class AccountState {
+    object Authenticated : AccountState()
+    data class Authenticating(val oAuthUrl: String, val state: String) : AccountState()
+    object AuthenticationProblem : AccountState()
+    object NotAuthenticated : AccountState()
 }
 
 internal enum class ProgressState {
@@ -98,6 +102,7 @@ internal sealed class Event {
 
         object LoggedOut : Progress()
 
+        data class StartedOAuthFlow(val oAuthUrl: String, val state: String) : Progress()
         data class CompletedAuthentication(val authType: AuthType) : Progress()
     }
 }
@@ -107,6 +112,7 @@ internal sealed class State {
     data class Active(val progressState: ProgressState) : State()
 }
 
+@Suppress("NestedBlockDepth")
 internal fun State.next(event: Event): State? = when (this) {
     // Reacting to external events.
     is State.Idle -> when (this.accountState) {
@@ -114,6 +120,18 @@ internal fun State.next(event: Event): State? = when (this) {
             Event.Account.Start -> State.Active(ProgressState.Initializing)
             is Event.Account.BeginEmailFlow -> State.Active(ProgressState.BeginningAuthentication)
             is Event.Account.BeginPairingFlow -> State.Active(ProgressState.BeginningAuthentication)
+            else -> null
+        }
+        is AccountState.Authenticating -> when (event) {
+            is Event.Progress.AuthData -> {
+                if (event.authData.state == this.accountState.state) {
+                    State.Active(ProgressState.CompletingAuthentication)
+                } else {
+                    logger.warn("Trying to finish authentication for an invalid auth state; ignoring.")
+                    null
+                }
+            }
+            Event.Progress.CancelAuth -> State.Idle(AccountState.NotAuthenticated)
             else -> null
         }
         AccountState.Authenticated -> when (event) {
@@ -136,9 +154,8 @@ internal fun State.next(event: Event): State? = when (this) {
             else -> null
         }
         ProgressState.BeginningAuthentication -> when (event) {
-            is Event.Progress.AuthData -> State.Active(ProgressState.CompletingAuthentication)
             Event.Progress.FailedToBeginAuth -> State.Idle(AccountState.NotAuthenticated)
-            Event.Progress.CancelAuth -> State.Idle(AccountState.NotAuthenticated)
+            is Event.Progress.StartedOAuthFlow -> State.Idle(AccountState.Authenticating(event.oAuthUrl, event.state))
             else -> null
         }
         ProgressState.CompletingAuthentication -> when (event) {

@@ -17,7 +17,6 @@ import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.sync.AccountEventsObserver
 import mozilla.components.concept.sync.AccountObserver
 import mozilla.components.concept.sync.AuthFlowError
-import mozilla.components.concept.sync.AuthFlowUrl
 import mozilla.components.concept.sync.AuthType
 import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.FxAEntryPoint
@@ -107,27 +106,6 @@ open class FxaAccountManager(
     ).asCoroutineDispatcher() + SupervisorJob(),
 ) : Closeable, Observable<AccountObserver> by ObserverRegistry() {
     private val logger = Logger("FirefoxAccountStateMachine")
-
-    /**
-     * Observer interface which lets its consumers respond to authentication requests.
-     */
-    private interface OAuthObserver {
-        /**
-         * Account manager is requesting for an OAUTH flow to begin.
-         * @param authFlowUrl Starting point for the OAUTH flow.
-         */
-        fun onBeginOAuthFlow(authFlowUrl: AuthFlowUrl)
-
-        /**
-         * Account manager encountered an error during authentication.
-         */
-        fun onError() {}
-    }
-
-    @Volatile
-    private var latestAuthState: String? = null
-
-    private val oauthObservers = object : Observable<OAuthObserver> by ObserverRegistry() {}
 
     init {
         GlobalAccountManager.setInstance(this)
@@ -363,23 +341,27 @@ open class FxaAccountManager(
             Event.Account.BeginEmailFlow(entrypoint)
         }
 
-        // 'deferredAuthUrl' will be set as the state machine reacts to the 'event'.
-        var deferredAuthUrl: String? = null
-        oauthObservers.register(
-            object : OAuthObserver {
-                override fun onBeginOAuthFlow(authFlowUrl: AuthFlowUrl) {
-                    deferredAuthUrl = authFlowUrl.url
-                }
-
-                override fun onError() {
-                    // No-op for now.
-                    logger.warn("Got an error during 'beginAuthentication'")
-                }
-            },
-        )
+        // Process the event, then use the new state to check the result of the operation
         processQueue(event)
-        oauthObservers.unregisterObservers()
-        deferredAuthUrl
+        val state = state
+        when (state) {
+            is State.Idle -> when (state.accountState) {
+                is AccountState.Authenticating -> {
+                    state.accountState.oAuthUrl
+                }
+                else -> {
+                    logger.warn("Got an error during 'beginAuthentication'")
+                    null
+                }
+            }
+            else -> {
+                logger.warn(
+                    "Observed ProgressState after processQueue() in 'beginAuthentication'!" +
+                        "Fxa is likely in a broken state",
+                )
+                null
+            }
+        }
     }
 
     /**
@@ -392,32 +374,20 @@ open class FxaAccountManager(
      * Guiding principle behind this is that logging into accounts.firefox.com should not affect
      * logged-in state of the browser itself, even though the two may have an established communication
      * channel via [WebChannelFeature].
-     *
-     * @return A deferred boolean flag indicating if authentication state was accepted.
      */
     suspend fun finishAuthentication(authData: FxaAuthData) = withContext(coroutineContext) {
-        when {
-            latestAuthState == null -> {
-                logger.warn("Trying to finish authentication that was never started.")
-                false
-            }
-            authData.state != latestAuthState -> {
-                logger.warn("Trying to finish authentication for an invalid auth state; ignoring.")
-                false
-            }
-            authData.state == latestAuthState -> {
-                authData.declinedEngines?.let { persistDeclinedEngines(it) }
-                processQueue(Event.Progress.AuthData(authData))
-                true
-            }
-            else -> throw IllegalStateException("Unexpected finishAuthentication state")
-        }
+        authData.declinedEngines?.let { persistDeclinedEngines(it) }
+        processQueue(Event.Progress.AuthData(authData))
+        Unit
     }
 
     /**
      * Logout of the account, if currently logged-in.
      */
-    suspend fun logout() = withContext(coroutineContext) { processQueue(Event.Account.Logout) }
+    suspend fun logout() = withContext(coroutineContext) {
+        processQueue(Event.Account.Logout)
+        Unit
+    }
 
     /**
      * Register a [AccountEventsObserver] to monitor events relevant to an account/device.
@@ -542,6 +512,7 @@ open class FxaAccountManager(
             notifyObservers { onAuthenticationProblems() }
             null
         }
+        else -> null
     }
 
     /**
@@ -589,12 +560,11 @@ open class FxaAccountManager(
                 }
                 when (result) {
                     is Result.Success -> {
-                        latestAuthState = result.value!!.state
-                        oauthObservers.notifyObservers { onBeginOAuthFlow(result.value) }
-                        null
+                        with(result.value!!) {
+                            Event.Progress.StartedOAuthFlow(url, state)
+                        }
                     }
                     Result.Failure -> {
-                        oauthObservers.notifyObservers { onError() }
                         Event.Progress.FailedToBeginAuth
                     }
                 }
