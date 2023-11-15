@@ -37,7 +37,6 @@ import mozilla.components.service.fxa.StorageWrapper
 import mozilla.components.service.fxa.SyncAuthInfoCache
 import mozilla.components.service.fxa.SyncConfig
 import mozilla.components.service.fxa.SyncEngine
-import mozilla.components.service.fxa.asAuthFlowUrl
 import mozilla.components.service.fxa.asSyncAuthInfo
 import mozilla.components.service.fxa.emitSyncFailedFact
 import mozilla.components.service.fxa.into
@@ -556,7 +555,11 @@ open class FxaAccountManager(
                     throw IllegalStateException("BeginningAuthentication with a flow that is neither email nor pairing")
                 }
                 val result = withRetries(logger, MAX_NETWORK_RETRIES) {
-                    pairingUrl.asAuthFlowUrl(account, scopes, entrypoint = entrypoint)
+                    if (pairingUrl == null) {
+                        account.beginOAuthFlow(scopes, entrypoint)
+                    } else {
+                        account.beginPairingFlow(pairingUrl, scopes, entrypoint)
+                    }
                 }
                 when (result) {
                     is Result.Success -> {
