@@ -482,44 +482,65 @@ open class FxaAccountManager(
     }
 
     /**
-     * Side-effects of entering [AccountState] type states - our stable states.
-     * Once we reach these states, we simply notify our observers.
+     * Side-effects of entering [AccountState] type states
+     *
+     * Upon entering these states, observers are typically notified. The sole exception occurs
+     * during the completion of authentication, where it is necessary to populate the
+     * SyncAuthInfoCache for the background synchronization worker. Should this process fail, the
+     * system will transition to `AccountState.AuthenticationProblem`.
      */
-    private suspend fun accountStateSideEffects(forState: State.Idle, via: Event): Unit = when (forState.accountState) {
+    private suspend fun accountStateSideEffects(
+        forState: State.Idle,
+        via: Event,
+    ): Event? = when (forState.accountState) {
         AccountState.NotAuthenticated -> when (via) {
             Event.Progress.LoggedOut -> {
                 resetAccount()
                 notifyObservers { onLoggedOut() }
+                null
             }
             Event.Progress.FailedToBeginAuth -> {
                 resetAccount()
                 notifyObservers { onFlowError(AuthFlowError.FailedToBeginAuth) }
+                null
             }
             Event.Progress.FailedToCompleteAuth -> {
                 resetAccount()
                 notifyObservers { onFlowError(AuthFlowError.FailedToCompleteAuth) }
+                null
             }
-            else -> Unit
+            else -> null
         }
         AccountState.Authenticated -> when (via) {
             is Event.Progress.CompletedAuthentication -> {
-                notifyObservers { onAuthenticated(account, via.authType) }
-                refreshProfile(ignoreCache = false)
-                Unit
+                val operation = when (via.authType) {
+                    AuthType.Existing -> "CompletingAuthentication:accountRestored"
+                    else -> "CompletingAuthentication:AuthData"
+                }
+                if (authenticationSideEffects(operation)) {
+                    notifyObservers { onAuthenticated(account, via.authType) }
+                    refreshProfile(ignoreCache = false)
+                    null
+                } else {
+                    Event.Account.AccessTokenKeyError
+                }
             }
             Event.Progress.RecoveredFromAuthenticationProblem -> {
                 // Clear our access token cache; it'll be re-populated as part of the
                 // regular state machine flow.
                 SyncAuthInfoCache(context).clear()
+                // Should we also call authenticationSideEffects here?
+                // (https://bugzilla.mozilla.org/show_bug.cgi?id=1865086)
                 notifyObservers { onAuthenticated(account, AuthType.Recovered) }
                 refreshProfile(ignoreCache = true)
-                Unit
+                null
             }
-            else -> Unit
+            else -> null
         }
         AccountState.AuthenticationProblem -> {
             SyncAuthInfoCache(context).clear()
             notifyObservers { onAuthenticationProblems() }
+            null
         }
     }
 
@@ -585,21 +606,7 @@ open class FxaAccountManager(
                 val authType = AuthType.Existing
                 when (withServiceRetries(logger, MAX_NETWORK_RETRIES) { finalizeDevice(authType) }) {
                     ServiceResult.Ok -> {
-                        // This method can "fail" for a number of reasons:
-                        // - auth problems are encountered. In that case, GlobalAccountManager.authError
-                        // will be invoked, which will place an AuthenticationError event on state
-                        // machine's queue.
-                        // If that happens, we'll end up either in an Authenticated state
-                        // (if we're able to auto-recover) or in a 'AuthenticationProblem' state otherwise.
-                        // In both cases, the 'CompletedAuthentication' event below will be discarded.
-                        // - network errors are encountered. 'CompletedAuthentication' event will be processed,
-                        // moving the state machine into an 'Authenticated' state. Next time user requests
-                        // a sync, methods that failed will be re-ran, giving them a chance to succeed.
-                        if (authenticationSideEffects("CompletingAuthentication:accountRestored")) {
-                            Event.Progress.CompletedAuthentication(authType)
-                        } else {
-                            Event.Progress.FailedToCompleteAuthRestore
-                        }
+                        Event.Progress.CompletedAuthentication(authType)
                     }
                     ServiceResult.AuthError -> {
                         Event.Account.AuthenticationError("finalizeDevice")
@@ -622,11 +629,7 @@ open class FxaAccountManager(
                 if (completeAuth() is Result.Failure || finalize() is Result.Failure) {
                     Event.Progress.FailedToCompleteAuth
                 } else {
-                    if (authenticationSideEffects("CompletingAuthentication:AuthData")) {
-                        Event.Progress.CompletedAuthentication(via.authData.authType)
-                    } else {
-                        Event.Progress.FailedToCompleteAuth
-                    }
+                    Event.Progress.CompletedAuthentication(via.authData.authType)
                 }
             }
             else -> null
@@ -697,10 +700,7 @@ open class FxaAccountManager(
         // For example, a "NotAuthenticated" state may be entered after a logout, and its side-effects
         // will include clean-up and re-initialization of an account. Alternatively, it may be entered
         // after we've checked local disk, and didn't find a persisted authenticated account.
-        is State.Idle -> {
-            accountStateSideEffects(forState, via)
-            null
-        }
+        is State.Idle -> accountStateSideEffects(forState, via)
         is State.Active -> internalStateSideEffects(forState, via)
     }
 
