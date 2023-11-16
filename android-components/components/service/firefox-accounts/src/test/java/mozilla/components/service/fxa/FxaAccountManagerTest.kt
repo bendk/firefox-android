@@ -29,7 +29,6 @@ import mozilla.components.concept.sync.FxAEntryPoint
 import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.concept.sync.OAuthScopedKey
 import mozilla.components.concept.sync.Profile
-import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.service.fxa.manager.GlobalAccountManager
 import mozilla.components.service.fxa.manager.SyncEnginesStorage
@@ -281,7 +280,6 @@ class FxaAccountManagerTest {
         `when`(accountStorage.read()).thenReturn(mockAccount)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(eq(AuthType.Existing), any())).thenReturn(ServiceResult.Ok)
 
         val manager = TestableFxaAccountManager(
             testContext,
@@ -309,6 +307,10 @@ class FxaAccountManagerTest {
 
         assertEquals(mockAccount, manager.authenticatedAccount())
         assertEquals(profile, manager.accountProfile())
+
+        // Check device finalization
+        verify(mockAccount, times(1)).ensureCapabilities(any())
+        verify(mockAccount, never()).initializeDevice(any(), any(), any())
 
         // Make sure 'logoutAsync' clears out state and fires correct observers.
         reset(accountObserver)
@@ -358,10 +360,13 @@ class FxaAccountManagerTest {
 
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
         assertTrue(manager.authenticatedAccount() != null)
+
+        // Check device finalization
+        verify(mockAccount, never()).ensureCapabilities(any())
+        verify(mockAccount, times(1)).initializeDevice(any(), any(), any())
 
         verify(accountStorage, times(1)).read()
         verify(accountStorage, never()).clear()
@@ -404,7 +409,7 @@ class FxaAccountManagerTest {
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         doAnswer {
             throw FxaPanicException("Don't panic!")
-        }.`when`(constellation).finalizeDevice(any(), any())
+        }.`when`(mockAccount).initializeDevice(any(), any(), any())
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
         assertTrue(manager.authenticatedAccount() != null)
@@ -461,7 +466,6 @@ class FxaAccountManagerTest {
 
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
         assertTrue(manager.authenticatedAccount() != null)
@@ -518,7 +522,6 @@ class FxaAccountManagerTest {
         // The rest should "just work".
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
         assertTrue(manager.authenticatedAccount() != null)
@@ -560,7 +563,6 @@ class FxaAccountManagerTest {
 
         // Try again, without any network problems this time.
         `when`(mockAccount.beginOAuthFlow(any(), any())).thenReturn(testAuthFlowUrl())
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         assertEquals(testAuthFlowUrl().url, manager.beginAuthentication(entrypoint = mock()))
 
@@ -614,7 +616,6 @@ class FxaAccountManagerTest {
                 any(),
             ),
         ).thenReturn(testAuthFlowUrl())
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         assertEquals(
             testAuthFlowUrl().url,
@@ -663,7 +664,6 @@ class FxaAccountManagerTest {
 
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
         assertTrue(manager.authenticatedAccount() != null)
@@ -727,7 +727,6 @@ class FxaAccountManagerTest {
 
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
         `when`(constellation.refreshDevices()).thenReturn(true)
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
@@ -741,7 +740,7 @@ class FxaAccountManagerTest {
 
         // At this point, we're logged in. Trigger a 401.
         manager.encounteredAuthError("a test")
-        assertRecovered(true, "a test", constellation, accountObserver, manager, mockAccount, crashReporter)
+        assertRecovered(true, "a test", accountObserver, manager, mockAccount, crashReporter)
     }
 
     @Test
@@ -775,7 +774,6 @@ class FxaAccountManagerTest {
 
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
         `when`(constellation.refreshDevices()).thenReturn(true)
 
         manager.finishAuthentication(FxaAuthData(AuthType.Signin, "dummyCode", EXPECTED_AUTH_STATE))
@@ -791,29 +789,27 @@ class FxaAccountManagerTest {
         manager.encounteredAuthError("a test")
         // ... and just for good measure, trigger another 401 to simulate overlapping API calls legitimately hitting 401s.
         manager.encounteredAuthError("a test", errorCountWithinTheTimeWindow = 3)
-        assertRecovered(true, "a test", constellation, accountObserver, manager, mockAccount, crashReporter)
+        assertRecovered(true, "a test", accountObserver, manager, mockAccount, crashReporter)
 
         // We've fully recovered by now, let's hit another 401 sometime later (count has been reset).
         manager.encounteredAuthError("a test")
-        assertRecovered(true, "a test", constellation, accountObserver, manager, mockAccount, crashReporter)
+        assertRecovered(true, "a test", accountObserver, manager, mockAccount, crashReporter)
 
         // Suddenly, we're in a bad loop, expect to hit our circuit-breaker here.
         manager.encounteredAuthError("another test", errorCountWithinTheTimeWindow = 50)
-        assertRecovered(false, "another test", constellation, accountObserver, manager, mockAccount, crashReporter)
+        assertRecovered(false, "another test", accountObserver, manager, mockAccount, crashReporter)
     }
 
     private suspend fun assertRecovered(
         success: Boolean,
         operation: String,
-        constellation: DeviceConstellation,
         accountObserver: AccountObserver,
         manager: FxaAccountManager,
-        mockAccount: OAuthAccount,
+        mockAccount: FirefoxAccount,
         crashReporter: CrashReporting,
     ) {
-        // During recovery, only 'sign-in' finalize device call should have been made.
-        verify(constellation, times(1)).finalizeDevice(eq(AuthType.Signin), any())
-        verify(constellation, never()).finalizeDevice(eq(AuthType.Recovered), any())
+        // During recovery, only 'sign-in' initializeDevice call should have been made.
+        verify(mockAccount, times(1)).initializeDevice(any(), any(), any())
 
         assertEquals(mockAccount, manager.authenticatedAccount())
 
@@ -843,7 +839,6 @@ class FxaAccountManagerTest {
         `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
         `when`(mockAccount.getProfile(ignoreCache = false)).thenReturn(null)
         `when`(mockAccount.beginOAuthFlow(any(), any())).thenReturn(testAuthFlowUrl())
         `when`(mockAccount.completeOAuthFlow(anyString(), anyString())).thenReturn(true)
@@ -913,7 +908,6 @@ class FxaAccountManagerTest {
         `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         // Our recovery flow should attempt to hit this API. Model the "can't recover" condition by returning false.
         `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(false)
@@ -974,7 +968,6 @@ class FxaAccountManagerTest {
         `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         // Our recovery flow should attempt to hit this API. Model the "don't know what's up" condition by returning null.
         `when`(mockAccount.checkAuthorizationStatus(eq("profile"))).thenReturn(null)
@@ -1037,7 +1030,6 @@ class FxaAccountManagerTest {
         `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
 
         val profile = Profile(
             uid = "testUID",
@@ -1121,7 +1113,6 @@ class FxaAccountManagerTest {
         `when`(mockAccount.getAuthState()).thenReturn(FxaRustAuthState.DISCONNECTED)
         `when`(mockAccount.getCurrentDeviceId()).thenReturn("testDeviceId")
         `when`(mockAccount.deviceConstellation()).thenReturn(constellation)
-        `when`(constellation.finalizeDevice(any(), any())).thenReturn(ServiceResult.Ok)
         doAnswer {
             throw FxaPanicException("500")
         }.`when`(mockAccount).getProfile(ignoreCache = false)

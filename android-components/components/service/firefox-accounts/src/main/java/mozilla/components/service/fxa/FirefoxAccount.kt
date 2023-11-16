@@ -5,12 +5,15 @@
 package mozilla.components.service.fxa
 
 import android.net.Uri
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.withContext
+import mozilla.appservices.fxaclient.DeviceCapability
 import mozilla.appservices.fxaclient.FxaClient
+import mozilla.appservices.sync15.DeviceType
 import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.sync.AuthFlowUrl
 import mozilla.components.concept.sync.DeviceConstellation
@@ -94,8 +97,19 @@ class FirefoxAccount internal constructor(
         persistCallback.setCallback(callback)
     }
 
-    @Suppress("UndocumentedPublicFunction") // this is visible only for tests
+    @VisibleForTesting
+    /**
+     * Get the high-level authentication state of the client
+     */
     public fun getAuthState() = inner.getAuthState()
+
+    internal fun initializeDevice(
+        name: String,
+        deviceType: DeviceType,
+        supportedCapabilities: Set<DeviceCapability>,
+    ) = inner.initializeDevice(name, deviceType, supportedCapabilities)
+
+    internal fun ensureCapabilities(capabilities: Set<DeviceCapability>) = inner.ensureCapabilities(capabilities)
 
     override suspend fun beginOAuthFlow(
         scopes: Set<String>,

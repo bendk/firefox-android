@@ -6,7 +6,6 @@ package mozilla.components.service.fxa
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
-import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.service.fxa.manager.FxaAccountManager
 import mozilla.components.service.fxa.manager.GlobalAccountManager
 import mozilla.components.support.test.eq
@@ -331,49 +330,6 @@ class UtilsKtTest {
             is Result.Failure -> {
                 assertEquals(3, eventual2.attempts)
             }
-        }
-    }
-
-    @Test
-    fun `withServiceRetries immediate success`() = runTest {
-        when (withServiceRetries(mock(), 3, suspend { ServiceResult.Ok })) {
-            is ServiceResult.Ok -> {}
-            else -> fail()
-        }
-    }
-
-    @Test
-    fun `withServiceRetries generic failure keeps retrying`() = runTest {
-        // keeps retrying on generic error
-        val eventual = SucceedOn(0, ServiceResult.Ok, ServiceResult.OtherError)
-        when (withServiceRetries(mock(), 3) { eventual.reifiedFailure() }) {
-            is ServiceResult.Ok -> fail()
-            else -> {
-                assertEquals(3, eventual.attempts)
-            }
-        }
-    }
-
-    @Test
-    fun `withServiceRetries auth failure short circuit`() = runTest {
-        // keeps retrying on generic error
-        val eventual = SucceedOn(0, ServiceResult.Ok, ServiceResult.AuthError)
-        when (withServiceRetries(mock(), 3) { eventual.reifiedFailure() }) {
-            is ServiceResult.Ok -> fail()
-            else -> {
-                assertEquals(1, eventual.attempts)
-            }
-        }
-    }
-
-    @Test
-    fun `withServiceRetries eventual success`() = runTest {
-        val eventual = SucceedOn(3, ServiceResult.Ok, ServiceResult.OtherError)
-        when (withServiceRetries(mock(), 5) { eventual.reifiedFailure() }) {
-            is ServiceResult.Ok -> {
-                assertEquals(3, eventual.attempts)
-            }
-            else -> fail()
         }
     }
 

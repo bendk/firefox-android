@@ -16,15 +16,12 @@ import mozilla.appservices.syncmanager.SyncTelemetry
 import mozilla.components.concept.base.crash.CrashReporting
 import mozilla.components.concept.sync.AccountEvent
 import mozilla.components.concept.sync.AccountEventsObserver
-import mozilla.components.concept.sync.AuthType
 import mozilla.components.concept.sync.ConstellationState
 import mozilla.components.concept.sync.Device
 import mozilla.components.concept.sync.DeviceCommandOutgoing
-import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.DeviceConstellation
 import mozilla.components.concept.sync.DeviceConstellationObserver
 import mozilla.components.concept.sync.DevicePushSubscription
-import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
@@ -59,60 +56,6 @@ class FxaDeviceConstellation(
         Initialize,
         EnsureCapabilities,
         None,
-    }
-
-    @Suppress("ComplexMethod")
-    @Throws(FxaPanicException::class)
-    override suspend fun finalizeDevice(
-        authType: AuthType,
-        config: DeviceConfig,
-    ): ServiceResult = withContext(scope.coroutineContext) {
-        val finalizeAction = when (authType) {
-            AuthType.Signin,
-            AuthType.Signup,
-            AuthType.Pairing,
-            is AuthType.OtherExternal,
-            AuthType.MigratedCopy,
-            -> DeviceFinalizeAction.Initialize
-            AuthType.Existing,
-            AuthType.MigratedReuse,
-            -> DeviceFinalizeAction.EnsureCapabilities
-            AuthType.Recovered -> DeviceFinalizeAction.None
-        }
-
-        if (finalizeAction == DeviceFinalizeAction.None) {
-            ServiceResult.Ok
-        } else {
-            val capabilities = config.capabilities.map { it.into() }.toSet()
-            if (finalizeAction == DeviceFinalizeAction.Initialize) {
-                try {
-                    account.initializeDevice(config.name, config.type.into(), capabilities)
-                    ServiceResult.Ok
-                } catch (e: FxaPanicException) {
-                    throw e
-                } catch (e: FxaUnauthorizedException) {
-                    ServiceResult.AuthError
-                } catch (e: FxaException) {
-                    ServiceResult.OtherError
-                }
-            } else {
-                try {
-                    account.ensureCapabilities(capabilities)
-                    ServiceResult.Ok
-                } catch (e: FxaPanicException) {
-                    throw e
-                } catch (e: FxaUnauthorizedException) {
-                    // Unless we've added a new capability, in practice 'ensureCapabilities' isn't
-                    // actually expected to do any work: everything should have been done by initializeDevice.
-                    // So if it did, and failed, let's report this so that we're aware of this!
-                    // See https://github.com/mozilla-mobile/android-components/issues/8164
-                    crashReporter?.submitCaughtException(FxaDeviceConstellationException.EnsureCapabilitiesFailed())
-                    ServiceResult.AuthError
-                } catch (e: FxaException) {
-                    ServiceResult.OtherError
-                }
-            }
-        }
     }
 
     override suspend fun processRawEvent(payload: String) = withContext(scope.coroutineContext) {

@@ -12,6 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
+import mozilla.appservices.fxaclient.FxaException
 import mozilla.appservices.fxaclient.FxaRustAuthState
 import mozilla.appservices.syncmanager.DeviceSettings
 import mozilla.components.concept.base.crash.CrashReporting
@@ -23,7 +24,6 @@ import mozilla.components.concept.sync.DeviceConfig
 import mozilla.components.concept.sync.FxAEntryPoint
 import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.concept.sync.Profile
-import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.service.fxa.AccessTokenUnexpectedlyWithoutKey
 import mozilla.components.service.fxa.AccountManagerException
 import mozilla.components.service.fxa.AccountStorage
@@ -46,7 +46,6 @@ import mozilla.components.service.fxa.sync.SyncStatusObserver
 import mozilla.components.service.fxa.sync.WorkManagerSyncManager
 import mozilla.components.service.fxa.sync.clearSyncState
 import mozilla.components.service.fxa.withRetries
-import mozilla.components.service.fxa.withServiceRetries
 import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.base.observer.Observable
 import mozilla.components.support.base.observer.ObserverRegistry
@@ -576,32 +575,30 @@ open class FxaAccountManager(
         ProgressState.CompletingAuthentication -> when (via) {
             Event.Progress.AccountRestored -> {
                 val authType = AuthType.Existing
-                when (withServiceRetries(logger, MAX_NETWORK_RETRIES) { finalizeDevice(authType) }) {
-                    ServiceResult.Ok -> {
-                        Event.Progress.CompletedAuthentication(authType)
+                val capabilities = deviceConfig.capabilities.map { it.into() }.toSet()
+                try {
+                    withRetries(logger, MAX_NETWORK_RETRIES) {
+                        account.ensureCapabilities(capabilities)
                     }
-                    ServiceResult.AuthError -> {
-                        Event.Account.AuthenticationError("finalizeDevice")
-                    }
-                    ServiceResult.OtherError -> {
-                        Event.Progress.FailedToCompleteAuthRestore
-                    }
+                    Event.Progress.CompletedAuthentication(authType)
+                } catch (e: FxaException.Authentication) {
+                    Event.Account.AuthenticationError("finalizeDevice")
+                } catch (e: FxaException) {
+                    Event.Progress.FailedToCompleteAuthRestore
                 }
             }
             is Event.Progress.AuthData -> {
-                val completeAuth = suspend {
+                val capabilities = deviceConfig.capabilities.map { it.into() }.toSet()
+                try {
                     withRetries(logger, MAX_NETWORK_RETRIES) {
                         account.completeOAuthFlow(via.authData.code, via.authData.state)
                     }
-                }
-                val finalize = suspend {
-                    withRetries(logger, MAX_NETWORK_RETRIES) { finalizeDevice(via.authData.authType) }
-                }
-                // If we can't 'complete', we won't run 'finalize' due to short-circuiting.
-                if (completeAuth() is Result.Failure || finalize() is Result.Failure) {
-                    Event.Progress.FailedToCompleteAuth
-                } else {
+                    withRetries(logger, MAX_NETWORK_RETRIES) {
+                        account.initializeDevice(deviceConfig.name, deviceConfig.type.into(), capabilities)
+                    }
                     Event.Progress.CompletedAuthentication(via.authData.authType)
+                } catch (e: FxaException) {
+                    Event.Progress.FailedToCompleteAuth
                 }
             }
             else -> null
@@ -745,11 +742,6 @@ open class FxaAccountManager(
             }
         }
     }
-
-    private suspend fun finalizeDevice(authType: AuthType) = account.deviceConstellation().finalizeDevice(
-        authType,
-        deviceConfig,
-    )
 
     /**
      * Populates caches necessary for the sync worker (sync auth info and FxA device).

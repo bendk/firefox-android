@@ -4,7 +4,6 @@
 
 package mozilla.components.service.fxa
 
-import mozilla.components.concept.sync.ServiceResult
 import mozilla.components.service.fxa.manager.GlobalAccountManager
 import mozilla.components.support.base.log.logger.Logger
 
@@ -107,32 +106,4 @@ internal suspend fun <T> withRetries(logger: Logger, retryCount: Int, block: sus
     } else {
         Result.Success(res)
     }
-}
-
-/**
- * A helper function which allows retrying a [block] of suspend code for a few times in case it fails.
- * Short-circuits execution if [block] returns [ServiceResult.AuthError] during any of its attempts.
- *
- * @param logger [Logger] that will be used to log retry attempts/results
- * @param retryCount How many retry attempts are allowed
- * @param block A suspend function to execute
- * @return A [ServiceResult] representing result of [block] execution.
- */
-internal suspend fun withServiceRetries(
-    logger: Logger,
-    retryCount: Int,
-    block: suspend () -> ServiceResult,
-): ServiceResult {
-    var attempt = 0
-    do {
-        attempt += 1
-        logger.info("withServiceRetries: attempt $attempt/$retryCount")
-        when (val res = block()) {
-            ServiceResult.Ok, ServiceResult.AuthError -> return res
-            ServiceResult.OtherError -> {}
-        }
-    } while (attempt < retryCount)
-
-    logger.warn("withServiceRetries: all attempts failed")
-    return ServiceResult.OtherError
 }
